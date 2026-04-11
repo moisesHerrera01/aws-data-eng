@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  POC 02 - Real-time order event streaming: Kinesis Data Stream -> Lambda -> DynamoDB
+
+Resources:
+
+  # -------------------------------------------------------
+  # Kinesis Data Stream (1 shard — minimo costo)
+  # -------------------------------------------------------
+  OrderEventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: order-events-stream
+      ShardCount: 1
+      RetentionPeriodHours: 24
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+        - Key: POC
+          Value: poc-02-kinesis-dynamo
+
+  # -------------------------------------------------------
+  # DynamoDB Table — single-table design
+  # PK: ORDER#<order_id>
+  # SK: EVENT#<timestamp>#<event_type>
+  # GSI: consultas por cliente
+  # -------------------------------------------------------
+  OrderEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: order-events
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1-customer-orders
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+        - Key: POC
+          Value: poc-02-kinesis-dynamo
+
+  # -------------------------------------------------------
+  # IAM Role para Lambda
+  # -------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: poc02-lambda-kinesis-dynamo-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KinesisAndDynamoAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:ListShards
+                  - kinesis:ListStreams
+                Resource: !GetAtt OrderEventsStream.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt OrderEventsTable.Arn
+                  - !Sub "${OrderEventsTable.Arn}/index/*"
+
+  # -------------------------------------------------------
+  # Lambda Function — procesa eventos de Kinesis
+  # -------------------------------------------------------
+  KinesisProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: poc02-kinesis-processor
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: 128
+      Timeout: 60
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref OrderEventsTable
+      Code:
+        ZipFile: |
+          import json, base64, boto3, os, logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          dynamo = boto3.resource('dynamodb')
+          table = dynamo.Table(os.environ['TABLE_NAME'])
+
+          def handler(event, context):
+              ok, fail = 0, 0
+              for rec in event['Records']:
+                  try:
+                      evt = json.loads(base64.b64decode(rec['kinesis']['data']))
+                      table.put_item(Item={
+                          'PK':      f"ORDER#{evt['order_id']}",
+                          'SK':      f"EVENT#{evt['timestamp']}#{evt['event_type']}",
+                          'GSI1PK':  f"CUSTOMER#{evt['customer_id']}",
+                          'GSI1SK':  evt['timestamp'],
+                          'event_id':    evt['event_id'],
+                          'order_id':    evt['order_id'],
+                          'customer_id': str(evt['customer_id']),
+                          'event_type':  evt['event_type'],
+                          'product':     evt.get('product', ''),
+                          'amount':      str(evt.get('amount', 0)),
+                          'status':      evt['status'],
+                          'timestamp':   evt['timestamp'],
+                      })
+                      ok += 1
+                      logger.info(f"OK  {evt['event_type']} order={evt['order_id']}")
+                  except Exception as e:
+                      logger.error(f"ERR {e}")
+                      fail += 1
+              logger.info(f"Batch: processed={ok} failed={fail}")
+              return {'processed': ok, 'failed': fail}
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+        - Key: POC
+          Value: poc-02-kinesis-dynamo
+
+  # CloudWatch Log Group con retención corta (ahorro)
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${KinesisProcessorLambda}"
+      RetentionInDays: 3
+
+  # -------------------------------------------------------
+  # Event Source Mapping — conecta Kinesis con Lambda
+  # -------------------------------------------------------
+  KinesisEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt OrderEventsStream.Arn
+      FunctionName: !GetAtt KinesisProcessorLambda.Arn
+      StartingPosition: LATEST
+      BatchSize: 10
+      BisectBatchOnFunctionError: true
+
+Outputs:
+  StreamName:
+    Description: Nombre del Kinesis Data Stream
+    Value: !Ref OrderEventsStream
+
+  StreamArn:
+    Description: ARN del Kinesis Data Stream
+    Value: !GetAtt OrderEventsStream.Arn
+
+  TableName:
+    Description: Nombre de la tabla DynamoDB
+    Value: !Ref OrderEventsTable
+
+  LambdaName:
+    Description: Nombre de la funcion Lambda
+    Value: !Ref KinesisProcessorLambda
