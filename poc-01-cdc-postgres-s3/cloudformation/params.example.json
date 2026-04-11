@@ -1,0 +1,6 @@
+[
+  { "ParameterKey": "NgrokHost",        "ParameterValue": "0.tcp.ngrok.io" },
+  { "ParameterKey": "NgrokPort",        "ParameterValue": "PUERTO_NGROK" },
+  { "ParameterKey": "PostgresUser",     "ParameterValue": "pguser" },
+  { "ParameterKey": "PostgresDatabase", "ParameterValue": "salesdb" }
+]

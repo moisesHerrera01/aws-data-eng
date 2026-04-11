@@ -1,0 +1,226 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  POC 01 - CDC desde Postgres (local via ngrok) hacia S3 usando AWS DMS
+
+Parameters:
+  NgrokHost:
+    Type: String
+    Description: Host publico de ngrok (ej. 0.tcp.ngrok.io)
+
+  NgrokPort:
+    Type: Number
+    Description: Puerto publico de ngrok
+
+  PostgresUser:
+    Type: String
+    Default: pguser
+
+  PostgresDatabase:
+    Type: String
+    Default: salesdb
+
+  # Credencial sensible — el script deploy.sh la obtiene de SSM en tiempo de despliegue
+  # Crear con: aws ssm put-parameter --name "poc01-postgres-password" --value "TU_PASSWORD" --type SecureString
+  PostgresPassword:
+    Type: String
+    NoEcho: true
+
+Resources:
+
+  # -------------------------------------------------------
+  # S3 Bucket destino CDC
+  # -------------------------------------------------------
+  CdcBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "aws-data-eng-cdc-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+        - Key: POC
+          Value: poc-01-cdc
+
+  # -------------------------------------------------------
+  # IAM Role requerido por DMS para gestionar VPC (nombre fijo obligatorio)
+  # -------------------------------------------------------
+  DmsVpcRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dms-vpc-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: dms.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonDMSVPCManagementRole
+
+  # -------------------------------------------------------
+  # IAM Role para DMS escribir en S3
+  # -------------------------------------------------------
+  DmsS3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dms-s3-access-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: dms.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DmsS3WritePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt CdcBucket.Arn
+                  - !Sub "${CdcBucket.Arn}/*"
+
+  # -------------------------------------------------------
+  # DMS Replication Instance
+  # -------------------------------------------------------
+  DmsReplicationSubnetGroup:
+    Type: AWS::DMS::ReplicationSubnetGroup
+    DependsOn: DmsVpcRole
+    Properties:
+      ReplicationSubnetGroupDescription: Subnet group para POC 01
+      SubnetIds:
+        - subnet-0e03c591c39359b49
+        - subnet-04d09bd5dc3ad6a69
+        - subnet-0bc417ca2ca562a8c
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+  DmsReplicationInstance:
+    Type: AWS::DMS::ReplicationInstance
+    Properties:
+      ReplicationInstanceIdentifier: poc01-replication-instance
+      ReplicationInstanceClass: dms.t3.medium
+      AllocatedStorage: 20
+      PubliclyAccessible: true
+      MultiAZ: false
+      ReplicationSubnetGroupIdentifier: !Ref DmsReplicationSubnetGroup
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+  # -------------------------------------------------------
+  # DMS Source Endpoint (Postgres via ngrok)
+  # -------------------------------------------------------
+  DmsSourceEndpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointIdentifier: poc01-source-postgres
+      EndpointType: source
+      EngineName: postgres
+      ServerName: !Ref NgrokHost
+      Port: !Ref NgrokPort
+      DatabaseName: !Ref PostgresDatabase
+      Username: !Ref PostgresUser
+      Password: !Ref PostgresPassword
+      ExtraConnectionAttributes: "pluginName=pgoutput"
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+  # -------------------------------------------------------
+  # DMS Target Endpoint (S3)
+  # -------------------------------------------------------
+  DmsTargetEndpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointIdentifier: poc01-target-s3
+      EndpointType: target
+      EngineName: s3
+      S3Settings:
+        BucketName: !Ref CdcBucket
+        ServiceAccessRoleArn: !GetAtt DmsS3Role.Arn
+        DataFormat: parquet
+        CompressionType: NONE
+        CdcPath: cdc
+        DatePartitionEnabled: true
+        DatePartitionSequence: YYYYMMDD
+        IncludeOpForFullLoad: true
+        CdcInsertsAndUpdates: true
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+  # -------------------------------------------------------
+  # DMS Replication Task (CDC)
+  # -------------------------------------------------------
+  DmsReplicationTask:
+    Type: AWS::DMS::ReplicationTask
+    Properties:
+      ReplicationTaskIdentifier: poc01-cdc-task
+      MigrationType: full-load-and-cdc
+      ReplicationInstanceArn: !Ref DmsReplicationInstance
+      SourceEndpointArn: !Ref DmsSourceEndpoint
+      TargetEndpointArn: !Ref DmsTargetEndpoint
+      TableMappings: |
+        {
+          "rules": [
+            {
+              "rule-type": "selection",
+              "rule-id": "1",
+              "rule-name": "select-all-tables",
+              "object-locator": {
+                "schema-name": "public",
+                "table-name": "%"
+              },
+              "rule-action": "include"
+            }
+          ]
+        }
+      ReplicationTaskSettings: |
+        {
+          "TargetMetadata": {
+            "TargetSchema": "",
+            "SupportLobs": true,
+            "FullLobMode": false,
+            "LobChunkSize": 64,
+            "LimitedSizeLobMode": true,
+            "LobMaxSize": 32
+          },
+          "FullLoadSettings": {
+            "TargetTablePrepMode": "DROP_AND_CREATE",
+            "CreatePkAfterFullLoad": false,
+            "StopTaskCachedChangesApplied": false,
+            "StopTaskCachedChangesNotApplied": false,
+            "MaxFullLoadSubTasks": 8,
+            "TransactionConsistencyTimeout": 600,
+            "CommitRate": 50000
+          },
+          "Logging": {
+            "EnableLogging": true
+          }
+        }
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+Outputs:
+  CdcBucketName:
+    Description: Nombre del bucket S3 destino CDC
+    Value: !Ref CdcBucket
+
+  DmsReplicationInstanceArn:
+    Description: ARN de la instancia de replicacion DMS
+    Value: !Ref DmsReplicationInstance
+
+  DmsTaskArn:
+    Description: ARN de la tarea de replicacion CDC
+    Value: !Ref DmsReplicationTask
