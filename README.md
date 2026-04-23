@@ -10,7 +10,7 @@ Production-oriented proof of concepts for data engineering on AWS, fully impleme
 |---|------|-------|--------|
 | 01 | CDC Postgres → S3 | PostgreSQL, Docker, AWS DMS, S3, SSM, IAM | ✅ Done |
 | 02 | Real-time Event Streaming | Kinesis Data Streams, Lambda, DynamoDB, IAM | ✅ Done |
-| 03 | Distributed Spark Processing | EMR, S3, IAM | 🔜 Upcoming |
+| 03 | Distributed Spark Processing | EMR Serverless, S3, IAM | ✅ Done |
 | 04 | Serverless ETL + Data Catalog | Glue, PySpark, Glue Catalog, Athena, S3 | 🔜 Upcoming |
 | 05 | GraphQL API on Event Data | AppSync, DynamoDB, IAM | 🔜 Upcoming |
 
@@ -177,6 +177,91 @@ poc-02-kinesis-dynamo/
     ├── producer.py               # Order event simulator
     ├── deploy.sh                 # Deploys the stack
     └── destroy.sh                # Tears down the stack
+```
+
+---
+
+## POC 03 — Distributed Spark Processing: Medallion Architecture on EMR Serverless
+
+Batch data processing pipeline implementing the Medallion Architecture (Bronze → Silver → Gold) using EMR Serverless with PySpark. Demonstrates distributed transformations, schema enforcement, and multi-layer aggregation on S3 as a data lake.
+
+### Architecture
+
+```
+S3 Bronze  (raw CSV — simulates DMS CDC output)
+    ├── bronze/orders/orders.csv
+    └── bronze/customers/customers.csv
+         │
+         ▼
+EMR Serverless — Job 1: bronze_to_silver.py
+    - filter CDC deletes (op != 'D')
+    - deduplicate by primary key
+    - cast and enforce schema
+    - partition by year/month
+         │
+         ▼
+S3 Silver  (clean Parquet, partitioned)
+    ├── silver/orders/year=2026/month=4/
+    └── silver/customers/
+         │
+         ▼
+EMR Serverless — Job 2: silver_to_gold.py
+    - daily_sales       : revenue KPIs per day
+    - product_ranking   : units sold + revenue with dense_rank()
+    - customer_summary  : join orders + customers + top product via Window
+         │
+         ▼
+S3 Gold  (aggregated Parquet — ready for Athena / Glue Catalog)
+    ├── gold/daily_sales/
+    ├── gold/product_ranking/
+    └── gold/customer_summary/
+```
+
+### Stack
+
+| Component | Technology | Detail |
+|-----------|-----------|--------|
+| Compute | EMR Serverless (emr-7.0.0 / Spark 3.5) | Auto-stop after 1 min idle, pay per vCPU-second |
+| Storage | AWS S3 | Bronze / Silver / Gold layers |
+| IAM | Execution Role | Least-privilege S3 + CloudWatch access |
+| IaC | AWS CloudFormation | Full stack in a single template |
+
+### Key Patterns
+
+- **Medallion Architecture**: Bronze (raw) → Silver (clean, typed) → Gold (aggregated) — each layer has a clear contract
+- **Partition pruning**: Silver partitioned by `year/month` — downstream queries scan only relevant partitions
+- **Window functions**: `dense_rank()` for product revenue ranking, `rank()` for top product per customer
+- **Schema enforcement in Silver**: explicit casting + `trim/upper` normalization — Gold never sees dirty data
+- **EMR Serverless vs Glue**: pure Spark, no vendor lock-in, ~4x cheaper than Glue DPU pricing
+
+### Usage
+
+```bash
+# Deploy stack (S3 + EMR Serverless Application + IAM)
+cd poc-03-emr-spark
+bash scripts/deploy.sh
+
+# Run full pipeline: generate data -> Bronze->Silver -> Silver->Gold
+bash scripts/submit_jobs.sh
+
+# Tear down when done (empties S3 first)
+bash scripts/destroy.sh
+```
+
+### Structure
+
+```
+poc-03-emr-spark/
+├── cloudformation/
+│   └── poc03-emr-spark.yml     # S3, EMR Serverless app, IAM role
+├── spark/
+│   ├── bronze_to_silver.py     # PySpark Job 1 — clean and partition
+│   └── silver_to_gold.py       # PySpark Job 2 — aggregate and rank
+└── scripts/
+    ├── generate_data.py        # Generates Bronze CSV seed data in S3
+    ├── deploy.sh               # Deploys the CloudFormation stack
+    ├── submit_jobs.sh          # Uploads scripts + submits EMR jobs in sequence
+    └── destroy.sh              # Empties S3 and tears down the stack
 ```
 
 ---
