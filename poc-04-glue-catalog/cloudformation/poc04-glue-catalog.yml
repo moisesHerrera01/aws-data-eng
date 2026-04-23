@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  POC 04 - Serverless ETL + Data Catalog: Glue Crawlers, Glue Job with
+  Job Bookmark, and Athena for SQL analytics over S3.
+
+Resources:
+
+  # -------------------------------------------------------
+  # S3 — Data Lake + Athena query results
+  # -------------------------------------------------------
+  DataLakeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "poc04-datalake-${AWS::AccountId}"
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+        - Key: POC
+          Value: poc-04-glue-catalog
+
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "poc04-athena-results-${AWS::AccountId}"
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+  # -------------------------------------------------------
+  # IAM Role — Glue (crawlers + jobs)
+  # -------------------------------------------------------
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: poc04-glue-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: GlueS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DataLakeBucket.Arn
+                  - !Sub "${DataLakeBucket.Arn}/*"
+                  - !GetAtt AthenaResultsBucket.Arn
+                  - !Sub "${AthenaResultsBucket.Arn}/*"
+
+  # -------------------------------------------------------
+  # Glue Databases — one per layer
+  # -------------------------------------------------------
+  GlueDatabaseBronze:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: bronze
+        Description: Raw ingestion layer — CSV files from source systems
+
+  GlueDatabaseSilver:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: silver
+        Description: Cleaned and typed Parquet — partitioned by year/month
+
+  GlueDatabaseGold:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: gold
+        Description: Aggregated business metrics — ready for analytics
+
+  # -------------------------------------------------------
+  # Glue Crawlers — auto-discover schema per layer
+  # -------------------------------------------------------
+  CrawlerBronze:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: poc04-crawler-bronze
+      Role: !GetAtt GlueRole.Arn
+      DatabaseName: bronze
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DataLakeBucket}/bronze/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Configuration: '{"Version":1.0,"CrawlerOutput":{"Partitions":{"AddOrUpdateBehavior":"InheritFromTable"}}}'
+      Tags:
+        Project: aws-data-eng
+
+  CrawlerSilver:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: poc04-crawler-silver
+      Role: !GetAtt GlueRole.Arn
+      DatabaseName: silver
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DataLakeBucket}/silver/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Tags:
+        Project: aws-data-eng
+
+  CrawlerGold:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: poc04-crawler-gold
+      Role: !GetAtt GlueRole.Arn
+      DatabaseName: gold
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DataLakeBucket}/gold/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Tags:
+        Project: aws-data-eng
+
+  # -------------------------------------------------------
+  # Glue ETL Job — Bronze -> Silver with Job Bookmark
+  # -------------------------------------------------------
+  GlueEtlJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: poc04-bronze-to-silver
+      Role: !GetAtt GlueRole.Arn
+      GlueVersion: "4.0"
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${DataLakeBucket}/scripts/etl_job.py"
+        PythonVersion: "3"
+      DefaultArguments:
+        "--job-bookmark-option": "job-bookmark-enable"
+        "--enable-metrics": "true"
+        "--enable-continuous-cloudwatch-log": "true"
+        "--BUCKET": !Ref DataLakeBucket
+      MaxRetries: 0
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      Tags:
+        Project: aws-data-eng
+        POC: poc-04-glue-catalog
+
+  # -------------------------------------------------------
+  # Athena Workgroup
+  # -------------------------------------------------------
+  AthenaWorkgroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: poc04-workgroup
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${AthenaResultsBucket}/results/"
+        EnforceWorkGroupConfiguration: true
+      Tags:
+        - Key: Project
+          Value: aws-data-eng
+
+Outputs:
+  DataLakeBucket:
+    Value: !Ref DataLakeBucket
+
+  AthenaResultsBucket:
+    Value: !Ref AthenaResultsBucket
+
+  GlueJobName:
+    Value: !Ref GlueEtlJob
+
+  AthenaWorkgroup:
+    Value: !Ref AthenaWorkgroup

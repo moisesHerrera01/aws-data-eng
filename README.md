@@ -11,7 +11,7 @@ Production-oriented proof of concepts for data engineering on AWS, fully impleme
 | 01 | CDC Postgres → S3 | PostgreSQL, Docker, AWS DMS, S3, SSM, IAM | ✅ Done |
 | 02 | Real-time Event Streaming | Kinesis Data Streams, Lambda, DynamoDB, IAM | ✅ Done |
 | 03 | Distributed Spark Processing | EMR Serverless, S3, IAM | ✅ Done |
-| 04 | Serverless ETL + Data Catalog | Glue, PySpark, Glue Catalog, Athena, S3 | 🔜 Upcoming |
+| 04 | Serverless ETL + Data Catalog | Glue, GlueContext, Glue Catalog, Athena, S3 | ✅ Done |
 | 05 | GraphQL API on Event Data | AppSync, DynamoDB, IAM | 🔜 Upcoming |
 
 ---
@@ -262,6 +262,93 @@ poc-03-emr-spark/
     ├── deploy.sh               # Deploys the CloudFormation stack
     ├── submit_jobs.sh          # Uploads scripts + submits EMR jobs in sequence
     └── destroy.sh              # Empties S3 and tears down the stack
+```
+
+---
+
+## POC 04 — Serverless ETL + Data Catalog: Glue + Athena
+
+Incremental ETL pipeline using AWS Glue with Job Bookmarks to process only new files on each run, auto-cataloging schema into the Glue Data Catalog and querying results with Athena. Demonstrates the foundational serverless analytics pattern for data lakes on S3.
+
+### Architecture
+
+```
+S3 Bronze  (raw CSV — simulated CDC output)
+    ├── bronze/orders/batch1_orders.csv
+    └── bronze/orders/batch2_orders.csv
+         │
+    Glue Crawler (bronze)
+    → auto-discovers schema → Glue Catalog: bronze.orders
+         │
+         ▼
+AWS Glue ETL Job  (poc04-bronze-to-silver)
+    - Job Bookmark: tracks processed files — skips batch1 on second run
+    - DynamicFrame: read CSV, resolve types, rename fields
+    - filter op != 'D', trim/upper normalization
+    - write Parquet partitioned by year/month to Silver
+         │
+    Glue Crawler (silver)
+    → auto-discovers schema → Glue Catalog: silver.orders
+         │
+         ▼
+S3 Silver  (clean Parquet, partitioned)
+    └── silver/orders/year=2026/month=4/
+         │
+         ▼
+Amazon Athena  (poc04-workgroup)
+    SELECT status, COUNT(*), SUM(amount)
+    FROM silver.orders GROUP BY status
+```
+
+### Stack
+
+| Component | Technology | Detail |
+|-----------|-----------|--------|
+| Storage | AWS S3 | Bronze (CSV) and Silver (Parquet) layers |
+| ETL | AWS Glue ETL (v4.0) | GlueContext, DynamicFrame, Job Bookmark |
+| Catalog | AWS Glue Data Catalog | Databases + Crawlers per layer (bronze/silver/gold) |
+| Query | Amazon Athena | Serverless SQL over S3, custom Workgroup |
+| IAM | Glue Execution Role | AWSGlueServiceRole + least-privilege S3 inline policy |
+| IaC | AWS CloudFormation | Full stack in a single template |
+
+### Key Patterns
+
+- **Job Bookmark**: Glue tracks which S3 files have already been processed — batch2 run reads only the 30 new records, not the original 50
+- **GlueContext vs SparkContext**: `DynamicFrame` handles schema ambiguity natively; `resolveChoice` and `apply_mapping` replace manual casts
+- **Crawlers per layer**: Bronze crawler discovers raw CSV schema; Silver crawler picks up partitioned Parquet — both write to the Glue Catalog automatically
+- **Athena Workgroup**: query results isolated per project, `RecursiveDeleteOption` ensures clean teardown even with query history
+- **Glue vs EMR Serverless**: Glue adds Job Bookmarks, Catalog integration, and managed connectors; EMR Serverless gives raw Spark with lower per-DPU cost and no vendor lock-in
+
+### Usage
+
+```bash
+# Deploy stack (S3 + Glue + Crawlers + Athena Workgroup)
+cd poc-04-glue-catalog
+bash scripts/deploy.sh
+
+# Run initial load (batch1 — 50 orders)
+bash scripts/run_pipeline.sh
+
+# Run incremental load (batch2 — 30 new orders, Job Bookmark skips batch1)
+bash scripts/run_pipeline.sh batch2
+
+# Tear down when done
+bash scripts/destroy.sh
+```
+
+### Structure
+
+```
+poc-04-glue-catalog/
+├── cloudformation/
+│   └── poc04-glue-catalog.yml   # S3, Glue databases, crawlers, ETL job, Athena workgroup
+├── glue/
+│   └── etl_job.py               # GlueContext ETL — Bronze CSV to Silver Parquet with bookmark
+└── scripts/
+    ├── generate_data.py          # Generates Bronze CSV batches (batch1 / batch2)
+    ├── deploy.sh                 # Deploys the CloudFormation stack
+    ├── run_pipeline.sh           # End-to-end: generate -> crawl -> ETL -> query
+    └── destroy.sh                # Empties S3 buckets and tears down the stack
 ```
 
 ---
