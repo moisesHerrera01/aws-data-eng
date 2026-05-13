@@ -7,11 +7,12 @@
 -- del primer y último vuelo del mes como referencia (baseline).
 -- Calcula cuánto difiere cada día del baseline inicial.
 --
--- PUNTO CLAVE — LAST_VALUE necesita UNBOUNDED FOLLOWING:
+-- OBSERVACION — LAST_VALUE necesita UNBOUNDED FOLLOWING:
 --   Por defecto la ventana es RANGE UNBOUNDED PRECEDING TO CURRENT ROW.
---   LAST_VALUE con esta ventana devuelve el valor de la FILA ACTUAL,
---   no el verdadero último. Hay que especificar explícitamente:
---   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+--   LAST_VALUE con esa definición devuelve el valor de la fila actual,
+--   no el verdadero último de la partición.
+--   Usamos ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+--   para que la ventana cubra toda la partición.
 -- =============================================================
 
 SELECT

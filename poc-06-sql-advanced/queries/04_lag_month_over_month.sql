@@ -8,11 +8,12 @@
 -- las del mes anterior y la variación porcentual.
 -- Identifica qué rutas empeoraron más de un mes a otro.
 --
--- PUNTO CLAVE:
+-- OBSERVACION:
 --   LAG(expr, n, default) OVER (PARTITION BY ... ORDER BY ...)
 --   El tercer argumento es el valor por defecto cuando no existe
 --   la fila anterior (primer mes → NULL por defecto, 0 si se pone 0).
---   NULLIF(x, 0) evita división por cero al calcular el porcentaje.
+--   Usamos NULLIF(x, 0) para evitar división por cero al calcular
+--   la variación porcentual cuando el mes anterior tuvo 0 cancelaciones.
 -- =============================================================
 
 WITH cancelaciones_mes AS (

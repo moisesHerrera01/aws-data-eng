@@ -7,11 +7,11 @@
 -- Encuentra intervalos donde el sistema estuvo inactivo más de
 -- 30 minutos (sin ningún evento registrado).
 --
--- PUNTO CLAVE — LAG vs LEAD:
+-- OBSERVACION — LAG vs LEAD:
 --   LAG (col, n)  → valor de n filas HACIA ATRÁS (fila anterior)
 --   LEAD(col, n)  → valor de n filas HACIA ADELANTE (fila siguiente)
--- Para gap analysis, usamos LEAD porque queremos comparar
--- cada evento con el SIGUIENTE evento de la serie.
+-- Usamos LEAD en gap analysis para comparar cada evento con
+-- el SIGUIENTE evento y medir el intervalo entre ellos.
 -- =============================================================
 
 SELECT

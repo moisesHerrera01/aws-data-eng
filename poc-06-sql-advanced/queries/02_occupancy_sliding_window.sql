@@ -7,15 +7,15 @@
 -- Calcula el % de ocupación diaria y el promedio móvil de los
 -- últimos 7 días para cada ruta.
 --
--- PUNTO CLAVE — ROWS vs RANGE:
+-- OBSERVACION — ROWS vs RANGE:
 --   ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
 --     → ventana física: exactamente 6 filas anteriores + fila actual
 --       independientemente de los valores de fecha
 --   RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW
 --     → ventana lógica: filas cuya fecha esté dentro de 6 días
 --       HACIA ATRÁS (maneja huecos en la serie de fechas)
--- Si la serie de fechas puede tener huecos, usa RANGE.
--- Si los datos son densos (una fila por día), ROWS es equivalente.
+-- Usamos ROWS cuando la serie es densa (una fila por día).
+-- Usamos RANGE cuando la serie puede tener huecos de fechas.
 -- =============================================================
 
 SELECT

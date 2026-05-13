@@ -7,10 +7,11 @@
 -- el vuelo más reciente por ruta (patrón muy frecuente en ETL/CDC).
 -- Con los datos actuales: para cada ruta, el último vuelo del mes.
 --
--- PUNTO CLAVE — patrón "latest per group":
---   Este es uno de los patrones SQL más preguntados en entrevistas.
---   ROW_NUMBER() + CTE + WHERE rn = 1 es la forma canónica.
---   Alternativas: DISTINCT ON (solo PostgreSQL), subquery con MAX.
+-- OBSERVACION — patrón "latest per group":
+--   ROW_NUMBER() + CTE + WHERE rn = 1 es la forma canónica y portable.
+--   Usamos ORDER BY fecha DESC dentro de la partición para que rn=1
+--   corresponda siempre al registro más reciente del grupo.
+--   Alternativa PostgreSQL-específica: DISTINCT ON (ver Problema C).
 -- =============================================================
 
 -- PROBLEMA A: Último vuelo registrado por ruta en cada mes

@@ -6,11 +6,12 @@
 -- PROBLEMA A: Para cada ruta, calcula el total acumulado de
 -- pasajeros transportados día a día durante el mes de enero.
 --
--- PUNTO CLAVE:
+-- OBSERVACION:
 --   SUM(x) OVER (PARTITION BY ... ORDER BY ...)
 --   Sin ROWS/RANGE explícito, PostgreSQL usa por defecto
---   RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
---   → acumula todo desde el inicio de la partición hasta la fila actual.
+--   RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW,
+--   lo que acumula desde el inicio de la partición hasta la fila actual.
+--   Para acumulados exactos en series densas, ROWS es más predecible.
 -- =============================================================
 
 -- PROBLEMA A: Acumulado de pasajeros por ruta

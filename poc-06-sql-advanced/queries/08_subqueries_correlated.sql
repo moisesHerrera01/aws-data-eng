@@ -7,11 +7,12 @@
 -- de cancelaciones (todos los vuelos del día cancelados).
 -- Usa subquery correlacionada con EXISTS.
 --
--- PUNTO CLAVE — IN vs EXISTS vs JOIN:
+-- OBSERVACION — IN vs EXISTS vs JOIN:
 --   IN       : evalúa toda la lista antes de comparar (sin cortocircuito)
---   EXISTS   : se detiene en el primer match (más eficiente con índices)
---   NOT IN   : PELIGROSO si la subquery puede devolver NULL → usa NOT EXISTS
---   JOIN     : equivalente pero puede duplicar filas si hay 1:N sin DISTINCT
+--   EXISTS   : se detiene en el primer match — más eficiente con índices
+--   NOT IN   : si la subquery puede devolver NULL, el resultado es siempre
+--              FALSE → usamos NOT EXISTS para evitar ese comportamiento
+--   JOIN     : equivalente a EXISTS pero puede duplicar filas en relaciones 1:N
 -- =============================================================
 
 -- PROBLEMA A: Rutas con al menos un día donde todos los vuelos se cancelaron

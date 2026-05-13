@@ -7,13 +7,13 @@
 -- Obtén las 3 rutas con más cancelaciones para cada mes.
 -- Si dos rutas empatan, ambas deben aparecer (no recortar empates).
 --
--- PUNTO CLAVE — RANK vs ROW_NUMBER:
+-- OBSERVACION — RANK vs ROW_NUMBER:
 --   ROW_NUMBER : numera sin importar empates (siempre 1,2,3,4...)
 --   RANK       : si dos filas empatan en posición 2, ambas son 2
 --                y la siguiente es 4 (no 3)
 --   DENSE_RANK : igual que RANK pero sin saltar (2,2,3)
--- El enrevistador preguntará: "¿qué pasa si hay empate?"
--- La respuesta correcta para este caso: RANK o DENSE_RANK.
+-- Usamos RANK (no ROW_NUMBER) para que rutas con igual número de
+-- cancelaciones reciban el mismo ranking — sin recortar empates.
 -- =============================================================
 
 WITH cancelaciones AS (

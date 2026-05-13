@@ -1,0 +1,51 @@
+FUENTES STREAMING
+(microservicios, IoT, clickstream, logs)
+         │
+         │ put_record / put_records
+         ▼
+┌─────────────────────────────┐
+│   Kinesis Data Stream       │  ← buffer en tiempo real
+│   (shards según volumen)    │    retención: 24h - 7 días
+└─────────────────────────────┘
+         │
+    ┌────┴────────────────────┐
+    │                         │
+    ▼                         ▼
+Lambda                  Kinesis Firehose
+(tiempo real)           (micro-batch)
+    │                         │
+    ▼                         ▼
+DynamoDB               ┌──────────────────────────┐
+(serving layer)        │        S3                │
+AppSync API            │                          │
+                       │  BRONZE / RAW            │
+                       │  /raw/events/            │
+                       │  year=2026/month=04/     │
+                       │  day=11/hour=22/         │
+                       │  *.parquet               │
+                       └──────────────────────────┘
+                                  │
+                              Glue Job
+                           (cada 1h o trigger)
+                                  │
+                       ┌──────────────────────────┐
+                       │  SILVER / CURATED        │
+                       │  - limpieza              │
+                       │  - deduplicación         │
+                       │  - schema enforcement    │
+                       │  /silver/orders/         │
+                       └──────────────────────────┘
+                                  │
+                              Glue Job
+                           (schedule diario)
+                                  │
+                       ┌──────────────────────────┐
+                       │  GOLD / AGGREGATED       │
+                       │  - métricas de negocio   │
+                       │  - KPIs por cliente      │
+                       │  - ventas por producto   │
+                       │  /gold/sales_summary/    │
+                       └──────────────────────────┘
+                                  │
+                         Glue Catalog + Athena
+                         (consultas SQL sobre S3)
