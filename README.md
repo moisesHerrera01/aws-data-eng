@@ -13,6 +13,7 @@ Production-oriented proof of concepts for data engineering on AWS, fully impleme
 | 03 | Distributed Spark Processing | EMR Serverless, S3, IAM | ✅ Done |
 | 04 | Serverless ETL + Data Catalog | Glue, GlueContext, Glue Catalog, Athena, S3 | ✅ Done |
 | 05 | GraphQL API on Event Data | AppSync, DynamoDB, IAM | 🔜 Upcoming |
+| 06 | Advanced SQL Practice | PostgreSQL, Docker | ✅ Done |
 
 ---
 
@@ -349,6 +350,69 @@ poc-04-glue-catalog/
     ├── deploy.sh                 # Deploys the CloudFormation stack
     ├── run_pipeline.sh           # End-to-end: generate -> crawl -> ETL -> query
     └── destroy.sh                # Empties S3 buckets and tears down the stack
+```
+
+---
+
+## POC 06 — Advanced SQL Practice (Aviation Domain)
+
+Advanced SQL exercises using a local PostgreSQL database (Docker). Covers the window function and query patterns most commonly tested in data engineering interviews: RANK, ROW_NUMBER, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE, sliding windows, gap analysis, correlated subqueries, and recursive CTEs. No AWS required.
+
+### Schema
+
+```
+rutas           — master table of airline routes (SCL-LIM, BOG-MIA, etc.)
+vuelos          — 960 flights across 8 routes × 4 months (Jan–Apr 2025)
+                  columns: ruta, fecha, estado, pasajeros, capacidad
+logs_sistema    — 30 system events with deliberate outage gaps for gap analysis
+tripulantes     — 15 crew members (pilots, co-pilots, cabin crew)
+asignaciones_vuelo — crew assignments per flight
+```
+
+### Exercises
+
+| # | File | Concepts |
+|---|------|----------|
+| 01 | `01_top_cancellations_rank.sql` | CTE, RANK vs DENSE_RANK vs ROW_NUMBER, PARTITION BY |
+| 02 | `02_occupancy_sliding_window.sql` | ROWS BETWEEN, RANGE BETWEEN, named WINDOW clause |
+| 03 | `03_gap_analysis_lead.sql` | LEAD(), INTERVAL comparison, gap detection |
+| 04 | `04_lag_month_over_month.sql` | LAG(), month-over-month variation, NULLIF |
+| 05 | `05_running_totals_cte.sql` | SUM OVER (ORDER BY), UNBOUNDED PRECEDING, recursive CTE |
+| 06 | `06_row_number_dedup.sql` | ROW_NUMBER(), latest-per-group pattern, DISTINCT ON |
+| 07 | `07_first_last_value.sql` | FIRST_VALUE, LAST_VALUE, UNBOUNDED FOLLOWING, NTILE |
+| 08 | `08_subqueries_correlated.sql` | EXISTS, NOT EXISTS, scalar subquery, IN vs EXISTS trap |
+
+### Usage
+
+```bash
+# Start Postgres (same container as POC 01)
+cd poc-01-cdc-postgres-s3/docker
+docker-compose up -d
+
+# Load schema and seed data
+psql -h localhost -U pguser -d salesdb -f poc-06-sql-advanced/ddl/01_create_tables.sql
+psql -h localhost -U pguser -d salesdb -f poc-06-sql-advanced/ddl/02_seed_data.sql
+
+# Run any exercise
+psql -h localhost -U pguser -d salesdb -f poc-06-sql-advanced/exercises/01_top_cancellations_rank.sql
+```
+
+### Structure
+
+```
+poc-06-sql-advanced/
+├── ddl/
+│   ├── 01_create_tables.sql     # Schema: vuelos, rutas, logs_sistema, tripulantes
+│   └── 02_seed_data.sql         # 960 flights + logs with deliberate gaps
+└── exercises/
+    ├── 01_top_cancellations_rank.sql      # RANK / DENSE_RANK / ROW_NUMBER
+    ├── 02_occupancy_sliding_window.sql    # ROWS BETWEEN sliding window
+    ├── 03_gap_analysis_lead.sql           # LEAD + gap detection
+    ├── 04_lag_month_over_month.sql        # LAG + MoM comparison
+    ├── 05_running_totals_cte.sql          # Running SUM + recursive CTE
+    ├── 06_row_number_dedup.sql            # Latest-per-group dedup pattern
+    ├── 07_first_last_value.sql            # FIRST_VALUE / LAST_VALUE / NTILE
+    └── 08_subqueries_correlated.sql       # EXISTS / NOT EXISTS / scalar subquery
 ```
 
 ---
